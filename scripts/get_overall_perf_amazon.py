@@ -7,7 +7,6 @@ import sys
 
 domains = ['books', 'dvd', 'music']
 langs = ['en', 'de', 'fr', 'ja']
-# prog = re.compile(r".*, p: (\d\.\d+), r: (\d\.\d+), f: (\d\.\d+).*")
 
 
 def get_overall_perf(folder, suffix, source_lang=None):
@@ -24,7 +23,6 @@ def get_overall_perf(folder, suffix, source_lang=None):
                     srcs = [l for l in langs if l != langs[i]]
                     lang = ''.join(srcs)+'2'+langs[i]
             logfile = os.path.join(folder, f"{domain}_{lang}_{suffix}", 'log.txt')
-            # logfile = os.path.join(folder, f"{domain}_{suffix}_{lang}", 'log.txt')
             if not os.path.exists(logfile):
                 print('File not found:', logfile)
                 continue
@@ -55,7 +53,7 @@ def get_overall_perf(folder, suffix, source_lang=None):
 if __name__ == '__main__':
     assert len(sys.argv) > 1, 'Model dir is required.'
     suffix = sys.argv[2]
-    src = None
+    src = 3
     if len(sys.argv) > 3:
         src = int(sys.argv[3])
     

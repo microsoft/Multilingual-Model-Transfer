@@ -53,7 +53,7 @@ def get_overall_perf(folder, suffix, source_lang=None):
 if __name__ == '__main__':
     assert len(sys.argv) > 1, 'Model dir is required.'
     suffix = sys.argv[2]
-    src = None
+    src = 3 # number of source languages
     if len(sys.argv) > 3:
         src = int(sys.argv[3])
     

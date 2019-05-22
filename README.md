@@ -36,12 +36,24 @@ Our pre-processed version may be provided separately to run our code with 1-clic
 
 ### CoNLL Named Entity Recogintion
 ```bash
-./scripts/train_conll_ner_3to1.sh
+./scripts/train_conll_ner_3to1.sh {exp_name}
+```
+
+The following script can print out a compiled dev/test F1 scores for all languages:
+
+```bash
+python scripts/get_overall_perf_ner.py save {exp_name}
 ```
 
 ### Multilingual Amazon Reviews
 ```bash
-./scripts/train_amazon_3to1.sh
+./scripts/train_amazon_3to1.sh {exp_name}
+```
+
+The following script can print out a compiled dev/test F1 scores for all languages:
+
+```bash
+python scripts/get_overall_perf_amazon.py save {exp_name}
 ```
 
 ## Citation
