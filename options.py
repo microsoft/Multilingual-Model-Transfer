@@ -6,32 +6,31 @@ import torch.nn as nn
 parser = argparse.ArgumentParser()
 parser.add_argument('--random_seed', type=int, default=1)
 parser.add_argument('--max_epoch', type=int, default=30)
-parser.add_argument('--dataset', default='conll') # conll or cortana
-parser.add_argument('--cortana_dir', default='../data/cortana/')
-parser.add_argument('--amazon_dir', default='../data/amazon/')
-parser.add_argument('--conll_dir', default='../data/conll_ner/')
+parser.add_argument('--dataset', default='conll')
+parser.add_argument('--amazon_dir', default='./data/amazon/')
+parser.add_argument('--conll_dir', default='./data/conll_ner/')
 parser.add_argument('--train_on_translation/', dest='train_on_translation', action='store_true')
 parser.add_argument('--test_on_translation/', dest='test_on_translation', action='store_true')
 # for preprocessed amazon dataset; set to -1 to use 30000
-parser.add_argument('--domain', type=str, default='mystuff')
+parser.add_argument('--domain', type=str, default='books')
 # labeled langs: if not set, will use default langs for the dataset
 parser.add_argument('--langs', type=str, nargs='+', default=[])
 parser.add_argument('--unlabeled_langs', type=str, nargs='+', default=[])
 parser.add_argument('--dev_langs', type=str, nargs='+', default=[])
-parser.add_argument('--use_charemb', action='store_true', default=False)
+parser.add_argument('--use_charemb', action='store_true', default=True)
 parser.add_argument('--no_charemb', dest='use_charemb', action='store_false')
 parser.add_argument('--use_wordemb', dest='use_wordemb', action='store_true', default=True)
 parser.add_argument('--no_wordemb', dest='use_wordemb', action='store_false')
-# should correspond to opt.all_langs
+# should be (lang, filename) pairs
 # will be made available as a dict lang->emb_filename
-# emb_filenames should be in (lang, filename) pairs
 parser.add_argument('--emb_filenames', type=str, nargs='+', default=[])
+# alternatively, choose from a set of default embs (paths hard-coded later in this file)
 # muse, muse-idchar, vecmap or mono
 parser.add_argument('--default_emb', type=str, default='muse')
 parser.add_argument('--emb_size', type=int, default=300)
 # char embeddings
 parser.add_argument('--charemb_size', type=int, default=128)
-parser.add_argument('--charemb_model', type=str, default='cnn') # cnn, lstm
+parser.add_argument('--charemb_model', type=str, default='cnn') # cnn
 parser.add_argument('--charemb_num_layers', type=int, default=1)
 parser.add_argument('--fix_charemb', action='store_true', default=True)
 parser.add_argument('--no_fix_charemb', action='store_false')
@@ -49,12 +48,13 @@ parser.add_argument('--max_seq_len', type=int, default=0) # set to <=0 to not tr
 # if True, training samples with all Os are removed
 parser.add_argument('--remove_empty_samples', action='store_true', default=False)
 # which data to be used as unlabeled data: train, unlabeled, or both
-# TODO no unlabeled sets yet, please use 'train'
 parser.add_argument('--unlabeled_data', type=str, default='unlabeled')
-parser.add_argument('--model_save_file', default='./save/seqman')
-parser.add_argument('--output_pred', dest='output_pred', action='store_true')
+parser.add_argument('--model_save_file', default='./save/manmoe')
+#parser.add_argument('--output_pred', dest='output_pred', action='store_true')
+#parser.add_argument('--dump_gate_weights', dest='dump_gate_weights', action='store_true')
 parser.add_argument('--test_only', dest='test_only', action='store_true')
-parser.add_argument('--batch_size', type=int, default=64)
+parser.add_argument('--batch_size', type=int, default=16)
+parser.add_argument('--char_batch_size', type=int, default=0)
 # In PyTorch 0.3, Batch Norm no longer works for size 1 batch,
 # so we will skip leftover batch of size < batch_size
 parser.add_argument('--no_skip_leftover_batch', dest='skip_leftover_batch', action='store_false', default=True)
@@ -62,11 +62,13 @@ parser.add_argument('--learning_rate', type=float, default=0.001)
 parser.add_argument('--D_learning_rate', type=float, default=0.001)
 parser.add_argument('--weight_decay', type=float, default=1e-8)
 parser.add_argument('--D_weight_decay', type=float, default=1e-8)
+# decay lr if validation f1 not increasing
+parser.add_argument('--lr_decay', type=float, default=1)
+parser.add_argument('--lr_decay_epochs', type=int, default=3)
 parser.add_argument('--fix_emb', action='store_true', default=True)
 parser.add_argument('--no_fix_emb', action='store_false')
 parser.add_argument('--random_emb', action='store_true', default=False)
 parser.add_argument('--F_layers', type=int, default=2)
-# Feature Extractor model: lstm or cnn
 parser.add_argument('--model', default='lstm')
 # for LSTM model
 parser.add_argument('--bdrnn/', dest='bdrnn', action='store_true', default=True)  # bi-directional LSTM
@@ -89,9 +91,7 @@ parser.add_argument('--D_kernel_sizes', type=int, nargs='+', default=[3,4,5])
 parser.add_argument('--C_layers', type=int, default=1)
 # gate the C input (the features)
 parser.add_argument('--C_input_gate/', dest='C_input_gate', action='store_true', default=False)
-# gr (gradient reversing), bs (boundary seeking), l2
-# in the paper, we did not talk about the BS loss;
-# it's nearly equivalent to the GR loss (NLL loss in the paper)
+# see the MAN paper; in this work, we only implement the GR loss
 parser.add_argument('--loss', default='gr')
 parser.add_argument('--shared_hidden_size', type=int, default=128)
 parser.add_argument('--private_hidden_size', type=int, default=128)
@@ -102,10 +102,10 @@ parser.add_argument('--add_sp', dest='concat_sp', action='store_false')
 parser.add_argument('--sp_attn', dest='sp_attn', action='store_true')
 parser.add_argument('--sp_sigmoid_attn', dest='sp_sigmoid_attn', action='store_true')
 parser.add_argument('--activation', default='relu') # relu, leaky
-parser.add_argument('--wgan_trick/', dest='wgan_trick', action='store_true', default=True)
+parser.add_argument('--wgan_trick/', dest='wgan_trick', action='store_true', default=False)
 parser.add_argument('--no_wgan_trick/', dest='wgan_trick', action='store_false')
-parser.add_argument('--n_critic', type=int, default=5) # hyperparameter k in the paper
-parser.add_argument('--lambd', type=float, default=0.01)
+parser.add_argument('--n_critic', type=int, default=2) # hyperparameter k in the paper
+parser.add_argument('--lambd', type=float, default=0.002)
 # lambda scheduling: not used
 parser.add_argument('--lambd_schedule', dest='lambd_schedule', action='store_true', default=False)
 # gradient penalty: not used
@@ -121,29 +121,25 @@ parser.add_argument('--C_bn/', dest='C_bn', action='store_true', default=False)
 parser.add_argument('--no_C_bn/', dest='C_bn', action='store_false')
 parser.add_argument('--D_bn/', dest='D_bn', action='store_true', default=False)
 parser.add_argument('--no_D_bn/', dest='D_bn', action='store_false')
+parser.add_argument('--word_dropout', type=float, default=0.5)
+parser.add_argument('--char_dropout', type=float, default=0)
 parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--mlp_dropout', type=float, default=0.5)
+parser.add_argument('--D_word_dropout', type=float, default=0)
 parser.add_argument('--D_dropout', type=float, default=0.5)
 parser.add_argument('--device/', dest='device', type=str, default='cuda')
 parser.add_argument('--debug/', dest='debug', action='store_true')
 ###### MoE options ######
-# a single LSTM is used, and each expert is a MLP
+# a shared LSTM is used, and each expert is a MLP
 parser.add_argument('--F_hidden_size', type=int, default=128)
 parser.add_argument('--expert_hidden_size', type=int, default=128)
-# if True, a shared expert is added
+# if True, a shared expert is added (not used in paper)
 parser.add_argument('--expert_sp/', dest='expert_sp', action='store_true', default=False)
-parser.add_argument('--gate_loss_weight', type=float, default=1)
-parser.add_argument('--C_gate_loss_weight', type=float, default=1)
-# FIXME not working
-parser.add_argument('--my_C_gate_loss_func', action='store_true')
+parser.add_argument('--gate_loss_weight', type=float, default=0.01)
+parser.add_argument('--C_gate_loss_weight', type=float, default=0.01)
+parser.add_argument('--moe_last_act', type=str, default='tanh') # tanh or relu
 parser.add_argument('--detach_gate_input/', dest='detach_gate_input', action='store_true', default=True)
 parser.add_argument('--no_detach_gate_input/', dest='detach_gate_input', action='store_false')
-# if >0, all unlabeled lanbuages will be used to tune the MoE gate
-# MoE_tune_gate_samples samples taken from the training data will be used for tuning
-parser.add_argument('--tune_gate_epochs', type=int, default=0)
-parser.add_argument('--tune_gate_samples', type=int, default=0)
-parser.add_argument('--tune_gate_batch_size', type=int, default=1)
-parser.add_argument('--tune_gate_lr', type=float, default=0.001)
 # only effective if MoE is added between LSTMs (otherwise, specify C_layers)
 parser.add_argument('--MoE_layers', type=int, default=2)
 parser.add_argument('--MoE_bn/', dest='MoE_bn', action='store_true', default=False)
@@ -151,7 +147,6 @@ parser.add_argument('--no_MoE_bn/', dest='MoE_bn', action='store_false')
 ### Cross-Lingual Text Classification Options ###
 parser.add_argument('--F_attn', default='dot')  # attention mechanism (for LSTM): avg, last, dot
 parser.add_argument('--Fp_MoE', dest='Fp_MoE', action='store_true', default=True)
-# FIXME F_p is shared
 parser.add_argument('--no_Fp_MoE/', dest='Fp_MoE', action='store_false')
 parser.add_argument('--C_MoE', dest='C_MoE', action='store_true', default=True)
 parser.add_argument('--no_C_MoE/', dest='C_MoE', action='store_false')
@@ -166,55 +161,46 @@ if len(opt.dev_langs) == 0:
     opt.dev_langs = opt.all_langs
 
 DEFAULT_EMB = {
-    'en-us': '/home/user_name/fasttext-vectors/wiki.200k.en.vec',
-    'de-de': '/home/user_name/fasttext-vectors/muse.200k.de-en.de.vec',
-    'es-es': '/home/user_name/fasttext-vectors/muse.200k.es-en.es.vec',
-    'zh-cn': '/home/user_name/fasttext-vectors/muse.200k.zh-en.zh.vec',
-    'en': '/home/user_name/fasttext-vectors/wiki.200k.en.vec',
-    'de': '/home/user_name/fasttext-vectors/muse.200k.de-en.de.vec',
-    'es': '/home/user_name/fasttext-vectors/muse.200k.es-en.es.vec',
-    'zh': '/home/user_name/fasttext-vectors/muse.200k.zh-en.zh.vec',
-    'fr': '/home/user_name/fasttext-vectors/muse.200k.fr-en.fr.vec',
-    'ja': '/home/user_name/fasttext-vectors/muse.200k.ja-en.ja.vec',
-    'eng': '/home/user_name/fasttext-vectors/wiki.200k.en.vec',
-    'deu': '/home/user_name/fasttext-vectors/muse.200k.de-en.de.vec',
-    'esp': '/home/user_name/fasttext-vectors/muse.200k.es-en.es.vec',
-    'ned': '/home/user_name/fasttext-vectors/muse.200k.nl-en.nl.vec'
+    'en-us': './data/embeddings/muse/wiki.200k.en.vec',
+    'de-de': './data/embeddings/muse/muse.200k.de-en.de.vec',
+    'es-es': './data/embeddings/muse/muse.200k.es-en.es.vec',
+    'zh-cn': './data/embeddings/muse/muse.200k.zh-en.zh.vec',
+    'en': './data/embeddings/muse/wiki.200k.en.vec',
+    'de': './data/embeddings/muse/muse.200k.de-en.de.vec',
+    'es': './data/embeddings/muse/muse.200k.es-en.es.vec',
+    'zh': './data/embeddings/muse/muse.200k.zh-en.zh.vec',
+    'fr': './data/embeddings/muse/muse.200k.fr-en.fr.vec',
+    'ja': './data/embeddings/muse/muse.200k.ja-en.ja.vec',
+    'eng': './data/embeddings/muse/wiki.200k.en.vec',
+    'deu': './data/embeddings/muse/muse.200k.de-en.de.vec',
+    'esp': './data/embeddings/muse/muse.200k.es-en.es.vec',
+    'ned': './data/embeddings/muse/muse.200k.nl-en.nl.vec'
 }
-MUSE_IDCHAR_EMB = {
-    'en-us': '/home/user_name/fasttext-vectors/wiki.200k.en.vec',
-    'de-de': '/home/user_name/fasttext-vectors/muse_idchar/muse_idchar.200k.de-en.de.vec',
-    'es-es': '/home/user_name/fasttext-vectors/muse_idchar/muse_idchar.200k.es-en.es.vec',
-    'zh-cn': '/home/user_name/fasttext-vectors/muse_idchar/muse_idchar.200k.zh-en.zh.vec',
-    'en': '/home/user_name/fasttext-vectors/wiki.200k.en.vec',
-    'de': '/home/user_name/fasttext-vectors/muse_idchar/muse_idchar.200k.de-en.de.vec',
-    'es': '/home/user_name/fasttext-vectors/muse_idchar/muse_idchar.200k.es-en.es.vec',
-    'zh': '/home/user_name/fasttext-vectors/muse_idchar/muse_idchar.200k.zh-en.zh.vec',
-    'fr': '/home/user_name/fasttext-vectors/muse_idchar/muse_idchar.200k.fr-en.fr.vec',
-    'ja': '/home/user_name/fasttext-vectors/muse_idchar/muse_idchar.200k.ja-en.ja.vec',
-    'eng': '/home/user_name/fasttext-vectors/wiki.200k.en.vec',
-    'deu': '/home/user_name/fasttext-vectors/muse_idchar/muse_idchar.200k.de-en.de.vec',
-    'esp': '/home/user_name/fasttext-vectors/muse_idchar/muse_idchar.200k.es-en.es.vec'
-}
-DEFAULT_MONO_EMB = {
-    'en-us': '/home/user_name/fasttext-vectors/wiki.200k.en.vec',
-    'de-de': '/home/user_name/fasttext-vectors/wiki.200k.de.vec',
-    'es-es': '/home/user_name/fasttext-vectors/wiki.200k.es.vec',
-    'zh-cn': '/home/user_name/fasttext-vectors/wiki.200k.zh.vec'
+UMWE_EMB = {
+    'en': './data/embeddings/wiki.200k.en.vec',
+    'de': './data/embeddings/umwe-fullexport/umwe.200k.de-en.de.vec',
+    'es': './data/embeddings/umwe-fullexport/umwe.200k.es-en.es.vec',
+    'zh': './data/embeddings/umwe-fullexport/umwe.200k.zh-en.zh.vec',
+    'fr': './data/embeddings/umwe-fullexport/umwe.200k.fr-en.fr.vec',
+    'ja': './data/embeddings/umwe-fullexport/umwe.200k.ja-en.ja.vec',
+    'eng': './data/embeddings/wiki.200k.en.vec',
+    'deu': './data/embeddings/umwe-fullexport/umwe.200k.deesnl2en.de.vec',
+    'esp': './data/embeddings/umwe-fullexport/umwe.200k.deesnl2en.es.vec',
+    'ned': './data/embeddings/umwe-fullexport/umwe.200k.deesnl2en.nl.vec'
 }
 DEFAULT_VECMAP_EMB = {
-    'en-us': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.de-en.en.vec',
-    'de-de': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.de-en.de.vec',
-    'es-es': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.es-en.es.vec',
-    'zh-cn': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.zh-en.zh.vec',
-    'en': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.de-en.en.vec',
-    'de': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.de-en.de.vec',
-    'fr': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.fr-en.fr.vec',
-    'ja': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.ja-en.ja.vec',
-    'eng': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.de-en.en.vec',
-    'deu': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.de-en.de.vec',
-    'esp': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.es-en.es.vec',
-    'ned': '/home/user_name/fasttext-vectors/vecmap/vecmap_idchar_ortho.200k.nl-en.nl.vec',
+    'en-us': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.de-en.en.vec',
+    'de-de': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.de-en.de.vec',
+    'es-es': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.es-en.es.vec',
+    'zh-cn': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.zh-en.zh.vec',
+    'en': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.de-en.en.vec',
+    'de': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.de-en.de.vec',
+    'fr': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.fr-en.fr.vec',
+    'ja': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.ja-en.ja.vec',
+    'eng': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.de-en.en.vec',
+    'deu': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.de-en.de.vec',
+    'esp': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.es-en.es.vec',
+    'ned': './data/embeddings/vecmap/vecmap_idchar_ortho.200k.nl-en.nl.vec',
 }
 
 # init emb filenames
@@ -226,10 +212,8 @@ for i, lang in enumerate(opt.all_langs):
         def_fn = DEFAULT_EMB[lang]
     elif opt.default_emb == 'vecmap':
         def_fn = DEFAULT_VECMAP_EMB[lang]
-    elif opt.default_emb == 'mono':
-        def_fn = DEFAULT_MONO_EMB[lang]
-    elif opt.default_emb == 'muse-idchar':
-        def_fn = MUSE_IDCHAR_EMB[lang]
+    elif opt.default_emb == 'umwe':
+        def_fn = UMWE_EMB[lang]
     else:
         def_fn = ''
     fn = emb_fns[lang] if lang in emb_fns else def_fn

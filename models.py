@@ -5,6 +5,7 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from layers import *
 from options import opt
+import utils
 
 
 class MultiLangWordEmb(nn.Module):
@@ -25,6 +26,7 @@ class MultiLangWordEmb(nn.Module):
                     'num_layers': opt.charemb_lstm_layers,
                     'input_size': char_vocab.emb_size,
                     'hidden_size': opt.charemb_size,
+                    'word_dropout': opt.char_dropout,
                     'dropout': opt.dropout,
                     'bdrnn': opt.charemb_bdrnn,
                     'attn_type': opt.charemb_attn
@@ -36,6 +38,7 @@ class MultiLangWordEmb(nn.Module):
                     'hidden_size': opt.charemb_size,
                     'kernel_num': opt.charemb_kernel_num,
                     'kernel_sizes': opt.charemb_kernel_sizes,
+                    'word_dropout': opt.char_dropout,
                     'dropout': opt.dropout
                 }
             else:
@@ -45,6 +48,19 @@ class MultiLangWordEmb(nn.Module):
             elif opt.charemb_model.lower() == 'cnn':
                 self.char_pool = CNNSequencePooling(**charemb_args)
 
+    def get_char_vec(self, char_emb, char_lengths):
+        bs = opt.char_batch_size
+        if bs <= 0:
+            return self.char_pool((char_emb, char_lengths))
+        # devide into sub-batches if necessary
+        char_vec = torch.empty(len(char_emb), opt.charemb_size,
+                requires_grad=char_emb.requires_grad).to(char_emb.device)
+        for k in range(0, len(char_emb), bs):
+            x = char_emb[k:k+bs]
+            l = char_lengths[k:k+bs]
+            char_vec[k:k+bs] = self.char_pool((x, l))
+        return char_vec
+
     def forward(self, lang, words, chars, char_lengths):
         word_vec, char_vec = None, None
         if self.use_wordemb:
@@ -52,7 +68,8 @@ class MultiLangWordEmb(nn.Module):
         if self.use_charemb:
             bs, sl, cl = chars.size()
             char_vec = self.charemb(chars).view(bs*sl, cl, -1)
-            char_vec = self.char_pool((char_vec, char_lengths.view(bs*sl))).view(bs, sl, -1)
+            #char_vec = self.char_pool((char_vec, char_lengths.view(bs*sl))).view(bs, sl, -1)
+            char_vec = self.get_char_vec(char_vec, char_lengths.view(bs*sl)).view(bs, sl, -1)
         if not self.use_wordemb:
             embeds = char_vec
         elif not self.use_charemb:
@@ -69,12 +86,14 @@ class CNNSequencePooling(nn.Module):
                  hidden_size,
                  kernel_num,
                  kernel_sizes,
+                 word_dropout,
                  dropout):
         super(CNNSequencePooling, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.kernel_num = kernel_num
         self.kernel_sizes = kernel_sizes
+        self.word_dropout = word_dropout
         self.dropout = dropout
 
         self.convs = nn.ModuleList([nn.Conv2d(1, kernel_num, (K, input_size)) for K in kernel_sizes])
@@ -96,9 +115,9 @@ class CNNSequencePooling(nn.Module):
 
     def forward(self, input):
         data, _ = input
-        # batch_size = len(data)
         # conv
-        # data = functional.dropout(data, self.dropout, self.training)
+        if self.word_dropout > 0:
+            data = functional.dropout(data, self.word_dropout, self.training)
         data = data.unsqueeze(1) # batch_size, 1, seq_len, input_size
         x = [functional.relu(conv(data)).squeeze(3) for conv in self.convs]
         x = [functional.max_pool1d(i, i.size(2)).squeeze(2) for i in x]
@@ -112,12 +131,14 @@ class LSTMSequencePooling(nn.Module):
                  num_layers,
                  input_size,
                  hidden_size,
+                 word_dropout,
                  dropout,
                  bdrnn,
                  attn_type):
         super(LSTMSequencePooling, self).__init__()
         self.num_layers = num_layers
         self.dropout = dropout
+        self.word_dropout = word_dropout
         self.bdrnn = bdrnn
         self.attn_type = attn_type
         self.input_size = input_size
@@ -132,10 +153,9 @@ class LSTMSequencePooling(nn.Module):
         data, lengths = input
         # lengths_list = lengths.tolist()
         batch_size = len(data)
-        # data = functional.dropout(data, self.dropout, self.training)
+        if self.word_dropout > 0:
+            data = functional.dropout(data, self.word_dropout, self.training)
         packed = pack_padded_sequence(data, lengths, batch_first=True)
-        # state_shape = self.n_cells, batch_size, self.hidden_size
-        # h0 = c0 = autograd.Variable(embeds.data.new(*state_shape))
         output, (ht, ct) = self.rnn(packed)
 
         if self.attn_type == 'last':
@@ -156,12 +176,14 @@ class LSTMFeatureExtractor(nn.Module):
                  emb_size,
                  num_layers,
                  hidden_size,
+                 word_dropout,
                  dropout,
                  bdrnn):
         super(LSTMFeatureExtractor, self).__init__()
         self.num_layers = num_layers
         self.bdrnn = bdrnn
         self.dropout = dropout
+        self.word_dropout = word_dropout
         self.hidden_size = hidden_size//2 if bdrnn else hidden_size
         # self.n_cells = self.num_layers*2 if bdrnn else self.num_layers
         
@@ -172,73 +194,15 @@ class LSTMFeatureExtractor(nn.Module):
         embeds, lengths = input
         # lengths_list = lengths.tolist()
         batch_size, seq_len = embeds.size(0), embeds.size(1)
-        # added dropout before LSTM
-        embeds = functional.dropout(embeds, self.dropout, self.training)
+        # word_dropout before LSTM
+        if self.word_dropout > 0:
+            embeds = functional.dropout(embeds, self.word_dropout, self.training)
         packed = pack_padded_sequence(embeds, lengths, batch_first=True)
         # state_shape = self.n_cells, batch_size, self.hidden_size
         # h0 = c0 = autograd.Variable(embeds.data.new(*state_shape))
         output, _ = self.rnn(packed, None)
         output, _ = pad_packed_sequence(output, batch_first=True, total_length=seq_len)
         return output
-
-
-class MoELSTMFeatureExtractor(nn.Module):
-    def __init__(self,
-                 emb_size,
-                 num_layers,
-                 num_experts,
-                 moe_layers,
-                 hidden_size,
-                 dropout,
-                 bdrnn):
-        super(MoELSTMFeatureExtractor, self).__init__()
-        self.num_layers = num_layers
-        self.bdrnn = bdrnn
-        self.dropout = dropout
-        self.hidden_size = hidden_size//2 if bdrnn else hidden_size
-        # self.n_cells = self.num_layers*2 if bdrnn else self.num_layers
-        
-        self.rnns = nn.ModuleList()
-        self.moes = nn.ModuleList()
-        for i in range(num_layers):
-            if i == 0:
-                isize = emb_size
-            else:
-                isize = hidden_size
-            self.rnns.append(nn.LSTM(input_size=isize, hidden_size=self.hidden_size,
-                    num_layers=1, bidirectional=bdrnn))
-            if i > 0:
-                self.moes.append(
-                        MixtureOfExperts(
-                            num_layers=moe_layers,
-                            input_size=hidden_size,
-                            num_experts=num_experts,
-                            hidden_size=hidden_size,
-                            output_size=hidden_size,
-                            dropout=dropout,
-                            bn=opt.MoE_bn,
-                            is_tagger=False
-                            ))
-
-    def forward(self, input):
-        embeds, lengths = input
-        # lengths_list = lengths.tolist()
-        batch_size, seq_len = embeds.size(0), embeds.size(1)
-        output = embeds
-        gate_outputs = []
-        for i, rnn in enumerate(self.rnns):
-            output = functional.dropout(output, self.dropout, self.training)
-            packed = pack_padded_sequence(output, lengths, batch_first=True)
-            # state_shape = self.n_cells, batch_size, self.hidden_size
-            # h0 = c0 = autograd.Variable(embeds.data.new(*state_shape))
-            output, _ = rnn(packed)
-            output, _ = pad_packed_sequence(output, batch_first=True, total_length=seq_len)
-            # MoE
-            if i+1 < self.num_layers:
-                output, gate_output = self.moes[i](output)
-                gate_outputs.append(gate_output)
-        gate_outputs = torch.stack(gate_outputs, dim=0)
-        return output, gate_outputs
 
 
 class SpMlpTagger(nn.Module):
@@ -428,12 +392,15 @@ class Mlp(nn.Module):
             if i+1 < num_layers:
                 self.net.add_module('p-relu-{}'.format(i), opt.act_unit)
             else:
-                self.net.add_module('p-tanh-{}'.format(i), nn.Tanh())
+                if opt.moe_last_act == 'tanh':
+                    self.net.add_module('p-tanh-{}'.format(i), nn.Tanh())
+                elif opt.moe_last_act == 'relu':
+                    self.net.add_module('p-relu-{}'.format(i), nn.ReLU())
+                else:
+                    raise NotImplemented(opt.moe_last_act)
 
     def forward(self, input):
-        # data, _, _ = input
-        # TODO why we cannot multiply with the mask here???
-        return self.net(input) # * mask.unsqueeze(2)
+        return self.net(input)
 
 
 class MlpTagger(nn.Module):
@@ -463,9 +430,7 @@ class MlpTagger(nn.Module):
         self.net.add_module('p-logsoftmax', nn.LogSoftmax(dim=-1))
 
     def forward(self, input):
-        # data, _, _ = input
-        # TODO why we cannot multiply with the mask here???
-        return self.net(input) # * mask.unsqueeze(2)
+        return self.net(input)
 
 
 class MixtureOfExperts(nn.Module):
@@ -495,6 +460,7 @@ class MixtureOfExperts(nn.Module):
         expert_outs = torch.stack([exp(input) for exp in self.experts], dim=-2)
         # bs x seqlen x output_size
         output = torch.sum(gate_softmax.unsqueeze(-1) * expert_outs, dim=-2)
+        # output logits
         return output, gate_outs
 
 
@@ -514,6 +480,11 @@ class SpMixtureOfExperts(nn.Module):
         self.private_input_size = private_input_size
         self.concat_sp = concat_sp
         input_size = shared_input_size + private_input_size if concat_sp else shared_input_size
+        if opt.sp_attn:
+            if concat_sp:
+                self.sp_attn = nn.Linear(input_size, 2)
+            else:
+                self.sp_attn = nn.Linear(input_size, 1)
         self.moe = MixtureOfExperts(num_layers, input_size, num_experts,
                 hidden_size, output_size, dropout, bn, is_tagger=True)
 
@@ -525,9 +496,93 @@ class SpMixtureOfExperts(nn.Module):
             features = fs
         else:
             if self.concat_sp:
-                features = torch.cat([fs, fp], dim=-1)
+                if opt.sp_attn:
+                    features = torch.cat([fs, fp], dim=-1)
+                    # bs x seqlen x 2
+                    if opt.sp_sigmoid_attn:
+                        alphas = functional.sigmoid(self.sp_attn(features))
+                    else:
+                        alphas = functional.softmax(self.sp_attn(features), dim=-1)
+                    fs = fs * alphas[:,:,0].unsqueeze(-1)
+                    fp = fp * alphas[:,:,1].unsqueeze(-1)
+                    features = torch.cat([fs, fp], dim=-1)
+                else:
+                    features = torch.cat([fs, fp], dim=-1)
             else:
-                features = fs + fp
+                if opt.sp_attn:
+                    a1 = self.sp_attn(fs)
+                    a2 = self.sp_attn(fp)
+                    if opt.sp_sigmoid_attn:
+                        alphas = functional.sigmoid(torch.cat([a1, a2], dim=-1))
+                    else:
+                        alphas = functional.softmax(torch.cat([a1, a2], dim=-1), dim=-1)
+                    features = torch.stack([fs, fp], dim=2) # bs x seq_len x 2 x hidden_dim
+                    features = torch.sum(alphas.unsqueeze(-1) * features, dim=2)
+                else:
+                    features = fs + fp
+        return self.moe(features)
+
+
+class SpAttnMixtureOfExperts(nn.Module):
+    def __init__(self,
+                 num_layers,
+                 shared_input_size,
+                 private_input_size,
+                 concat_sp,
+                 num_experts,
+                 hidden_size,
+                 output_size,
+                 dropout,
+                 attn_type,
+                 bn):
+        super(SpAttnMixtureOfExperts, self).__init__()
+        self.shared_input_size = shared_input_size
+        self.private_input_size = private_input_size
+        self.concat_sp = concat_sp
+        input_size = shared_input_size + private_input_size if concat_sp else shared_input_size
+        if opt.sp_attn:
+            if concat_sp:
+                self.sp_attn = nn.Linear(input_size, 2)
+            else:
+                self.sp_attn = nn.Linear(input_size, 1)
+        self.moe = MixtureOfExperts(num_layers, input_size, num_experts,
+                hidden_size, output_size, dropout, bn, is_tagger=True)
+        if attn_type == 'dot':
+            self.attn = DotAttentionLayer(hidden_size)
+
+    def forward(self, input):
+        fs, fp, lengths = input
+        if self.shared_input_size == 0:
+            features = fp
+        elif self.private_input_size == 0:
+            features = fs
+        else:
+            if self.concat_sp:
+                if opt.sp_attn:
+                    features = torch.cat([fs, fp], dim=-1)
+                    # bs x seqlen x 2
+                    if opt.sp_sigmoid_attn:
+                        alphas = functional.sigmoid(self.sp_attn(features))
+                    else:
+                        alphas = functional.softmax(self.sp_attn(features), dim=-1)
+                    fs = fs * alphas[:,:,0].unsqueeze(-1)
+                    fp = fp * alphas[:,:,1].unsqueeze(-1)
+                    features = torch.cat([fs, fp], dim=-1)
+                else:
+                    features = torch.cat([fs, fp], dim=-1)
+            else:
+                if opt.sp_attn:
+                    a1 = self.sp_attn(fs)
+                    a2 = self.sp_attn(fp)
+                    if opt.sp_sigmoid_attn:
+                        alphas = functional.sigmoid(torch.cat([a1, a2], dim=-1))
+                    else:
+                        alphas = functional.softmax(torch.cat([a1, a2], dim=-1), dim=-1)
+                    features = torch.stack([fs, fp], dim=2) # bs x seq_len x 2 x hidden_dim
+                    features = torch.sum(alphas.unsqueeze(-1) * features, dim=2)
+                else:
+                    features = fs + fp
+        features = self.attn((features, lengths))
         return self.moe(features)
 
 

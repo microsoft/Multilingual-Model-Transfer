@@ -45,7 +45,10 @@ def unsorted_collate(batch):
 def my_collate(batch, sort):
     x, y = zip(*batch)
     # extract input indices
-    x, y = pad(x, y, opt.eos_idx, sort)
+    if opt.default_emb == 'elmo':
+        x, y = raw_pad(x, y, sort)
+    else:
+        x, y = pad(x, y, opt.eos_idx, sort)
     return (x, y)
 
 
@@ -64,7 +67,7 @@ def cls_my_collate(batch, sort):
     return (x, y)
 
 
-# TODO do not actually prepare input if word/char emb is not used to speed up
+# TODO do not actually prepare input if char emb is not used to speed up
 def pad(x, y, eos_idx, sort):
     bs = len(x)
     chars = [sample['chars'] for sample in x]
@@ -118,9 +121,36 @@ def pad(x, y, eos_idx, sort):
     return (padded_x, lengths, mask, padded_chars, padded_char_lengths), padded_y
 
 
+def raw_pad(x, y, sort):
+    bs = len(x)
+    lengths = [len(row) for row in x]
+    max_len = max(lengths)
+    # if using CNN, pad to at least the largest kernel size
+    if opt.model.lower() == 'cnn' or opt.D_model.lower() == 'cnn':
+        max_len = max(max_len, opt.max_kernel_size)
+    # pad sequences
+    lengths = torch.tensor(lengths)
+    padded_y = torch.full((len(y), max_len), -1, dtype=torch.long)
+    for i, tag in enumerate(y):
+        padded_y[i][:len(tag)] = torch.tensor(tag)
+    # create mask
+    idxes = torch.arange(0, max_len, dtype=torch.long).unsqueeze(0) # some day, you'll be able to directly do this on cuda
+    mask = (idxes<lengths.unsqueeze(1)).float()
+    if sort:
+        # sort by length
+        lengths, sort_idx = lengths.sort(0, descending=True)
+        x = [x[i] for i in sort_idx]
+        padded_y = padded_y.index_select(0, sort_idx)
+        mask = mask.index_select(0, sort_idx)
+    padded_y = padded_y.to(opt.device)
+    mask = mask.to(opt.device)
+    return (x, lengths, mask), padded_y
+
+
+
 def cls_pad(x, y, eos_idx, sort):
     bs = len(x)
-    chars = [sample['chars'] for sample in x]
+    chars = [sample['chars'] for sample in x] if opt.use_charemb else None
     x = [sample['words'] for sample in x]
     lengths = [len(row) for row in x]
     max_len = max(lengths)
@@ -139,13 +169,16 @@ def cls_pad(x, y, eos_idx, sort):
     if chars:
         padded_chars = torch.full((bs, max_len, max_char_len), eos_idx, dtype=torch.long)
         padded_char_lengths = torch.zeros((len(x), max_len), dtype=torch.long)
-    for i, (row, char_row, cl_row) in enumerate(zip(x, chars, char_lengths)):
-        assert eos_idx not in row, f'EOS in sequence {row}'
-        padded_x[i][:len(row)] = torch.tensor(row)
-        if chars:
+        for i, (row, char_row, cl_row) in enumerate(zip(x, chars, char_lengths)):
+            assert eos_idx not in row, f'EOS in sequence {row}'
+            padded_x[i][:len(row)] = torch.tensor(row)
             padded_char_lengths[i][:len(cl_row)] = torch.tensor(cl_row)
             for j, ch_word in enumerate(char_row):
                 padded_chars[i][j][:len(ch_word)] = torch.tensor(ch_word)
+    else:
+        for i, row in enumerate(x):
+            assert eos_idx not in row, f'EOS in sequence {row}'
+            padded_x[i][:len(row)] = torch.tensor(row)
     # create mask
     idxes = torch.arange(0, max_len, dtype=torch.long).unsqueeze(0) # some day, you'll be able to directly do this on cuda
     mask = (idxes<lengths.unsqueeze(1)).float()
@@ -164,9 +197,10 @@ def cls_pad(x, y, eos_idx, sort):
     if chars:
         padded_chars = padded_chars.to(opt.device)
         padded_char_lengths = padded_char_lengths.to(opt.device)
+        return (padded_x, lengths, mask, padded_chars, padded_char_lengths), y
     else:
         padded_chars = padded_char_lengths = None
-    return (padded_x, lengths, mask, padded_chars, padded_char_lengths), y
+        return (padded_x, lengths, mask, None, None), y
 
 
 def calc_gradient_penalty(D, features, onesided=False, interpolate=True):
@@ -272,8 +306,9 @@ def get_random_lang_label(loss, size):
     return labels
 
 
-def get_gate_label(gate_out, lang, mask, expert_sp):
-    num_experts, idx = len(opt.langs), opt.langs.index(lang)
+def get_gate_label(gate_out, lang, mask, expert_sp, all_langs=False):
+    langs = opt.all_langs if all_langs else opt.langs
+    num_experts, idx = len(langs), langs.index(lang)
     if expert_sp: # 0 is the shared gate
         idx += 1
         num_experts += 1
@@ -319,21 +354,8 @@ def gmean(iterable):
     return a.prod() ** (1. / len(a))
 
 
-# only penalize when target is 0, do not push towards positive labels
-# so it only discourage the use of other experts,
-# but does not affect whether to use shared or private language expert
-# outputs should be softmax
-# TODO not working
-def my_bceloss(outputs, targets, size_average=True, reduce=True):
-    if not (targets.size() == outputs.size()):
-        raise ValueError("Target size ({}) must be the same as input size ({})".format(targets.size(), outputs.size()))
-    if not (outputs>=0).all() or not (outputs<=1).all():
-        raise ValueError("Input must be between 0 and 1")
-    loss = -(1 - targets) * (1 - outputs).log()
-    if not reduce:
-        return loss
-    elif size_average:
-        return loss.mean()
-    else:
-        return loss.sum()
-
+def get_padding_size(kernel_size):
+    ka = kernel_size // 2
+    kb = ka - 1 if kernel_size % 2 == 0 else ka
+    # only pad top and down
+    return (0, 0, ka, kb)

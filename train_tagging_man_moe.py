@@ -1,12 +1,10 @@
-# A shared LSTM + MAN for learning domain-invariant features
-# Another shared LSTM with MoE on top for learning domain-specific features
-# MoE MLP tagger
-import pdb
+# A shared LSTM + MAN for learning language-invariant features (F_s)
+# Another shared LSTM with MoE on top for learning language-specific features (F_p)
+# MoE MLP tagger (C)
 from collections import defaultdict
 import io
 import itertools
 import logging
-import math
 import os
 import pickle
 import random
@@ -90,13 +88,13 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
     if opt.model.lower() == 'lstm':
         if opt.shared_hidden_size > 0:
             F_s = LSTMFeatureExtractor(opt.total_emb_size, opt.F_layers, opt.shared_hidden_size,
-                                       opt.dropout, opt.bdrnn)
+                                       opt.word_dropout, opt.dropout, opt.bdrnn)
         if opt.private_hidden_size > 0:
             if not opt.concat_sp:
                 assert opt.shared_hidden_size == opt.private_hidden_size, "shared dim != private dim when using add_sp!"
             F_p = nn.Sequential(
                     LSTMFeatureExtractor(opt.total_emb_size, opt.F_layers, opt.private_hidden_size,
-                            opt.dropout, opt.bdrnn),
+                            opt.word_dropout, opt.dropout, opt.bdrnn),
                     MixtureOfExperts(opt.MoE_layers, opt.private_hidden_size,
                             len(opt.langs), opt.private_hidden_size,
                             opt.private_hidden_size, opt.dropout, opt.MoE_bn, False)
@@ -118,6 +116,7 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
                 'num_layers': opt.D_lstm_layers,
                 'input_size': opt.shared_hidden_size,
                 'hidden_size': opt.shared_hidden_size,
+                'word_dropout': opt.D_word_dropout,
                 'dropout': opt.D_dropout,
                 'bdrnn': opt.D_bdrnn,
                 'attn_type': opt.D_attn
@@ -129,13 +128,19 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
                 'hidden_size': opt.shared_hidden_size,
                 'kernel_num': opt.D_kernel_num,
                 'kernel_sizes': opt.D_kernel_sizes,
+                'word_dropout': opt.D_word_dropout,
                 'dropout': opt.D_dropout
             }
         else:
             d_args = None
 
-        D = LanguageDiscriminator(opt.D_model, opt.D_layers, opt.shared_hidden_size, opt.shared_hidden_size,
-                len(opt.all_langs), opt.D_dropout, opt.D_bn, d_args)
+        if opt.D_model.lower() == 'mlp':
+            D = MLPLanguageDiscriminator(opt.D_layers, opt.shared_hidden_size,
+                    opt.shared_hidden_size, len(opt.all_langs), opt.loss, opt.D_dropout, opt.D_bn)
+        else:
+            D = LanguageDiscriminator(opt.D_model, opt.D_layers,
+                    opt.shared_hidden_size, opt.shared_hidden_size,
+                    len(opt.all_langs), opt.D_dropout, opt.D_bn, d_args)
     
     F_s, C, D = F_s.to(opt.device) if F_s else None, C.to(opt.device), D.to(opt.device) if D else None
     if F_p:
@@ -157,7 +162,7 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
                 f'netF_s.pth')))
         for lang in opt.all_langs:
             F_p.load_state_dict(torch.load(os.path.join(opt.model_save_file,
-                f'netF_p.pth')))
+                f'net_F_p.pth')))
         C.load_state_dict(torch.load(os.path.join(opt.model_save_file,
             f'netC.pth')))
         if D:
@@ -166,6 +171,8 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
 
         log.info('Evaluating validation sets:')
         acc = {}
+        log.info(dev_loaders)
+        log.info(vocabs)
         for lang in opt.all_langs:
             acc[lang] = evaluate(f'{lang}_dev', dev_loaders[lang], vocabs[lang], tag_vocab,
                     emb, lang, F_s, F_p, C)
@@ -182,6 +189,7 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
 
     # training
     best_acc, best_avg_acc = defaultdict(float), 0.0
+    epochs_since_decay = 0
     # lambda scheduling
     if opt.lambd > 0 and opt.lambd_schedule:
         opt.lambd_orig = opt.lambd
@@ -216,8 +224,6 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
         c_gate_correct = defaultdict(int)
         # D accuracy
         d_correct, d_total = 0, 0
-        # conceptually view 1 epoch as 1 epoch of the first lang
-        # num_iter = len(train_loaders[opt.langs[0]])
         for i in tqdm(range(num_iter), ascii=True):
             # D iterations
             if opt.shared_hidden_size > 0:
@@ -241,25 +247,27 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
                         # targets not used
                         d_inputs, _ = utils.endless_get_next_batch(
                                 unlabeled_loaders, d_unlabeled_iters, lang)
-                        d_inputs, d_lengths, _, d_chars, d_char_lengths = d_inputs
-                        d_targets = utils.get_lang_label(opt.loss, lang, len(d_lengths))
+                        d_inputs, d_lengths, mask, d_chars, d_char_lengths = d_inputs
                         d_embeds = emb(lang, d_inputs, d_chars, d_char_lengths)
                         shared_feat = F_s((d_embeds, d_lengths))
                         if opt.grad_penalty != 'none':
                             lang_features[lang] = shared_feat.detach()
-                        d_outputs = D((shared_feat, d_lengths))
-                        # D accuracy
-                        _, pred = torch.max(d_outputs, 1)
-                        d_total += len(d_lengths)
-                        if opt.loss.lower() == 'l2':
-                            _, tgt_indices = torch.max(d_targets, 1)
-                            d_correct += (pred==tgt_indices).sum().item()
-                            l_d = functional.mse_loss(d_outputs, d_targets)
-                            l_d.backward()
+                        if opt.D_model.lower() == 'mlp':
+                            d_outputs = D(shared_feat)
+                            # if token-level D, we can reuse the gate label generator
+                            d_targets = utils.get_gate_label(d_outputs, lang, mask, False, all_langs=True)
+                            d_total += torch.sum(d_lengths).item()
                         else:
-                            d_correct += (pred==d_targets).sum().item()
-                            l_d = functional.nll_loss(d_outputs, d_targets)
-                            l_d.backward()
+                            d_outputs = D((shared_feat, d_lengths))
+                            d_targets = utils.get_lang_label(opt.loss, lang, len(d_lengths))
+                            d_total += len(d_lengths)
+                        # D accuracy
+                        _, pred = torch.max(d_outputs, -1)
+                        # d_total += len(d_lengths)
+                        d_correct += (pred==d_targets).sum().item()
+                        l_d = functional.nll_loss(d_outputs.view(-1, D.num_langs),
+                                d_targets.view(-1), ignore_index=-1)
+                        l_d.backward()
                         loss_d[lang] = l_d.item()
                     # gradient penalty
                     if opt.grad_penalty != 'none':
@@ -338,22 +346,18 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
                     inputs, lengths, mask, chars, char_lengths = inputs
                     embeds = emb(lang, inputs, chars, char_lengths)
                     shared_feat = F_s((embeds, lengths))
-                    d_outputs = D((shared_feat, lengths))
-                    if opt.loss.lower() == 'gr':
+                    # d_outputs = D((shared_feat, lengths))
+                    if opt.D_model.lower() == 'mlp':
+                        d_outputs = D(shared_feat)
+                        # if token-level D, we can reuse the gate label generator
+                        d_targets = utils.get_gate_label(d_outputs, lang, mask, False, all_langs=True)
+                    else:
+                        d_outputs = D((shared_feat, lengths))
                         d_targets = utils.get_lang_label(opt.loss, lang, len(lengths))
-                        l_d = functional.nll_loss(d_outputs, d_targets)
-                        if opt.lambd > 0:
-                            l_d *= -opt.lambd
-                    elif opt.loss.lower() == 'bs':
-                        d_targets = utils.get_random_lang_label(opt.loss, len(lengths))
-                        l_d = functional.kl_div(d_outputs, d_targets, size_average=False)
-                        if opt.lambd > 0:
-                            l_d *= opt.lambd
-                    elif opt.loss.lower() == 'l2':
-                        d_targets = utils.get_random_lang_label(opt.loss, len(lengths))
-                        l_d = functional.mse_loss(d_outputs, d_targets)
-                        if opt.lambd > 0:
-                            l_d *= opt.lambd
+                    l_d = functional.nll_loss(d_outputs.view(-1, D.num_langs),
+                            d_targets.view(-1), ignore_index=-1)
+                    if opt.lambd > 0:
+                        l_d *= -opt.lambd
                     l_d.backward()
 
             optimizer.step()
@@ -385,6 +389,7 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
         log.info(f'Average test accuracy: {avg_test_acc}')
 
         if avg_acc > best_avg_acc:
+            epochs_since_decay = 0
             log.info(f'New best average validation accuracy: {avg_acc}')
             best_acc['valid'] = acc
             best_acc['test'] = test_acc
@@ -404,6 +409,13 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
             if D:
                 torch.save(D.state_dict(),
                         '{}/netD.pth'.format(opt.model_save_file))
+        else:
+            epochs_since_decay += 1
+            if opt.lr_decay < 1 and epochs_since_decay >= opt.lr_decay_epochs:
+                epochs_since_decay = 0
+                old_lr = optimizer.param_groups[0]['lr']
+                optimizer.param_groups[0]['lr'] = old_lr * opt.lr_decay
+                log.info(f'Decreasing LR to {old_lr * opt.lr_decay}')
 
     # end of training
     log.info(f'Best average validation accuracy: {best_avg_acc}')
@@ -421,7 +433,7 @@ def evaluate(name, loader, vocab, tag_vocab, emb, lang, F_s, F_p, C):
     conll = io.StringIO()
     with torch.no_grad():
         for inputs, targets in tqdm(it, ascii=True):
-            inputs, lengths, _, chars, char_lengths = inputs
+            inputs, lengths, mask, chars, char_lengths = inputs
             embeds = (emb(lang, inputs, chars, char_lengths), lengths)
             shared_features, lang_features = None, None
             if opt.shared_hidden_size > 0:
@@ -432,7 +444,7 @@ def evaluate(name, loader, vocab, tag_vocab, emb, lang, F_s, F_p, C):
                     lang_features = torch.zeros(targets.size(0),
                             targets.size(1), opt.private_hidden_size).to(opt.device) 
                 else:
-                    lang_features, _ = F_p(embeds)
+                    lang_features, gate_outputs = F_p(embeds)
             if opt.C_MoE:
                 outputs, _ = C((shared_features, lang_features))
             else:
@@ -447,10 +459,6 @@ def evaluate(name, loader, vocab, tag_vocab, emb, lang, F_s, F_p, C):
                     conll.write(f'{word} {gold_tag} {pred_tag}\n')
                 conll.write('\n')
     f1 = utils.conllF1(conll, log)
-    if opt.output_pred:
-        with open(os.path.join(opt.model_save_file, f"{name}.out"), 'w') as ouf:
-            conll.seek(0)
-            shutil.copyfileobj(conll, ouf)
     conll.close()
     log.info('{}: F1 score: {}%'.format(name, f1))
     return f1
@@ -465,8 +473,6 @@ def main():
     assert opt.use_wordemb or opt.use_charemb, "At least one of word or char embeddings must be used!"
     char_vocab = Vocab(opt.charemb_size)
     log.info(f'Loading Datasets...')
-    if opt.dataset.lower() == 'cortana':
-        log.info(f'Domain: {opt.domain}')
     log.info(f'Languages {opt.langs}')
 
     log.info('Loading Embeddings...')
@@ -483,26 +489,19 @@ def main():
                 get_dataset_fn = get_test_on_translation_conll_ner_datasets
             train_sets[lang], dev_sets[lang], test_sets[lang], unlabeled_sets[lang] = \
                     get_dataset_fn(vocabs[lang], char_vocab, tag_vocab, opt.conll_dir, lang)
-        elif opt.dataset.lower() == 'cortana':
-            get_dataset_fn = get_cortana_bio_datasets
-            if opt.train_on_translation:
-                get_dataset_fn = get_train_on_translation_datasets
-            if opt.test_on_translation:
-                get_dataset_fn = get_test_on_translation_datasets
-            train_sets[lang], dev_sets[lang], test_sets[lang], unlabeled_sets[lang] = \
-                    get_dataset_fn(vocabs[lang], char_vocab, tag_vocab, opt.cortana_dir, opt.domain, lang)
         else:
             raise Exception(f"Unknown dataset {opt.dataset}")
 
     opt.num_labels = len(tag_vocab)
+    log.info(f'Tagset: {tag_vocab.id2tag}')
     log.info(f'Done Loading Datasets.')
 
     cv = train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabeled_sets)
     log.info(f'Training done...')
     acc = sum(cv['valid'].values()) / len(cv['valid'])
-    log.info(f'Validation Set Language Average\t{acc}')
+    log.info(f'Validation Set Domain Average\t{acc}')
     test_acc = sum(cv['test'].values()) / len(cv['test'])
-    log.info(f'Test Set Language Average\t{test_acc}')
+    log.info(f'Test Set Domain Average\t{test_acc}')
     return cv
 
 

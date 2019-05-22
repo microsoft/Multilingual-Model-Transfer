@@ -1,5 +1,6 @@
 import glob
 import os
+import pickle
 import random
 
 import torch
@@ -21,11 +22,15 @@ class MultiLangAmazonDataset(Dataset):
         self.Y = []
         if input_file is None:
             return
-        with open(input_file) as inf:
-            for line in inf:
-                parts = line.split('\t')
-                assert len(parts) == 2, f"Incorrect format {line}"
-                x = parts[1].rstrip().split(' ')
+        if input_file.endswith('.pkl'):
+            with open(input_file, 'rb') as inf:
+                reviews = pickle.load(inf)
+            self.raw_X = reviews['X']
+            self.Y = reviews['Y']
+            if num_train_lines > 0:
+                self.raw_X = self.raw_X[:num_train_lines]
+                self.Y = self.Y[:num_train_lines]
+            for x in self.raw_X:
                 if max_seq_len > 0:
                     x = x[:max_seq_len]
                 if update_vocab:
@@ -35,7 +40,6 @@ class MultiLangAmazonDataset(Dataset):
                     for w in x:
                         for ch in w:
                             char_vocab.add_word(ch, normalize=opt.lowercase_char)
-                self.raw_X.append(x)
                 sample = {}
                 if vocab:
                     sample['words'] = [vocab.lookup(w) for w in x]
@@ -43,7 +47,33 @@ class MultiLangAmazonDataset(Dataset):
                     sample['chars'] = [[char_vocab.lookup(ch,
                             normalize=opt.lowercase_char) for ch in w] for w in x]
                 self.X.append(sample)
-                self.Y.append(int(parts[0]))
+        else:
+            with open(input_file) as inf:
+                for cnt, line in enumerate(inf):
+                    parts = line.split('\t')
+                    assert len(parts) == 2, f"Incorrect format {line}"
+                    x = parts[1].rstrip().split(' ')
+                    self.raw_X.append(x)
+                    if max_seq_len > 0:
+                        x = x[:max_seq_len]
+                    if update_vocab:
+                        for w in x:
+                            vocab.add_word(w)
+                    if char_vocab and update_vocab:
+                        for w in x:
+                            for ch in w:
+                                char_vocab.add_word(ch, normalize=opt.lowercase_char)
+                    sample = {}
+                    if vocab:
+                        sample['words'] = [vocab.lookup(w) for w in x]
+                    if char_vocab:
+                        sample['chars'] = [[char_vocab.lookup(ch,
+                                normalize=opt.lowercase_char) for ch in w] for w in x]
+                    self.X.append(sample)
+                    self.Y.append(int(parts[0]))
+                    if num_train_lines > 0 and cnt+1 >= num_train_lines:
+                        break
+                print(f"Loaded {cnt+1} samples")
         assert len(self.X) == len(self.Y)
 
     def __len__(self):
@@ -92,12 +122,12 @@ def get_multi_lingual_amazon_datasets(vocab, char_vocab, root_dir, domain, lang,
     print(f'Loading Multi-Lingual Amazon Review data for {domain} Domain and {lang} Language..')
     data_dir = os.path.join(root_dir, lang, domain)
 
-    train_set = MultiLangAmazonDataset(os.path.join(data_dir, 'train.tok.txt'),
+    train_set = MultiLangAmazonDataset(os.path.join(data_dir, 'train.pkl'),
                            vocab, char_vocab, max_seq_len, 0, update_vocab=True)
     # train-dev split
     dev_set = train_set.train_dev_split(400, shuffle=True)
-    test_set = MultiLangAmazonDataset(os.path.join(data_dir, 'test.tok.txt'),
+    test_set = MultiLangAmazonDataset(os.path.join(data_dir, 'test.pkl'),
                            vocab, char_vocab, max_seq_len, 0, update_vocab=True)
-    unlabeled_set = MultiLangAmazonDataset(os.path.join(data_dir, 'unlabeled.tok.txt'),
+    unlabeled_set = MultiLangAmazonDataset(os.path.join(data_dir, 'unlabeled.pkl'),
                            vocab, char_vocab, max_seq_len, 50000, update_vocab=True)
     return train_set, dev_set, test_set, unlabeled_set

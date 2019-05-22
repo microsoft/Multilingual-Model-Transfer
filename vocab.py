@@ -42,9 +42,6 @@ class Vocab:
         self.unk_tok = '<unk>'
         self.add_word(self.unk_tok)
         self.unk_idx = self.w2vvocab[self.unk_tok]
-        # normalize
-        # self.embeddings /= np.linalg.norm(self.embeddings, axis=1).reshape(-1,1)
-        # zero </s>
 
     def base_form(word):
         return word.strip().lower()

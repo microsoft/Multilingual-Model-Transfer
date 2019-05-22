@@ -68,39 +68,6 @@ class BioDataset(Dataset):
         return subset
 
 
-def get_cortana_bio_datasets(vocab, char_vocab, tag_vocab, data_dir, domain, lang):
-    print(f'Loading Cortana Seq Tagging data for {lang} Language..')
-    train_set = BioDataset(os.path.join(data_dir, f'{domain}.Train_{lang}.bio.txt'),
-                           vocab, char_vocab, tag_vocab, update_vocab=True)
-    dev_set = BioDataset(os.path.join(data_dir, f'{domain}.Dev_{lang}.bio.txt'),
-                           vocab, char_vocab, tag_vocab, update_vocab=True)
-    test_set = BioDataset(os.path.join(data_dir, f'{domain}.Test_{lang}.bio.txt'),
-                           vocab, char_vocab, tag_vocab, update_vocab=False)
-    return train_set, dev_set, test_set, train_set
-
-
-def get_train_on_translation_datasets(vocab, char_vocab, tag_vocab, data_dir, domain, lang):
-    print(f'Loading Train-On-Translation Cortana Seq Tagging data for {lang} Language..')
-    train_set = BioDataset(os.path.join(data_dir, f'{domain}.Train_en-us2{lang}_{lang}.bio.txt'),
-                           vocab, char_vocab, tag_vocab, update_vocab=True)
-    dev_set = BioDataset(os.path.join(data_dir, f'{domain}.Dev_{lang}.bio.txt'),
-                           vocab, char_vocab, tag_vocab, update_vocab=True)
-    test_set = BioDataset(os.path.join(data_dir, f'{domain}.Test_{lang}.bio.txt'),
-                           vocab, char_vocab, tag_vocab, update_vocab=False)
-    return train_set, dev_set, test_set, train_set
-
-
-def get_test_on_translation_datasets(vocab, char_vocab, tag_vocab, data_dir, domain, lang):
-    print(f'Loading Test-On-Translation Cortana Seq Tagging data for {lang} Language..')
-    train_set = BioDataset(os.path.join(data_dir, f'{domain}.Train_en-us.bio.txt'),
-                           vocab, char_vocab, tag_vocab, update_vocab=True)
-    dev_set = BioDataset(os.path.join(data_dir, f'{domain}.Dev_en-us2{lang}_en-us.bio.txt'),
-                           vocab, char_vocab, tag_vocab, update_vocab=True)
-    test_set = BioDataset(os.path.join(data_dir, f'{domain}.Test_en-us2{lang}_en-us.bio.txt'),
-                           vocab, char_vocab, tag_vocab, update_vocab=False)
-    return train_set, dev_set, test_set, train_set
-
-
 def get_conll_ner_datasets(vocab, char_vocab, tag_vocab, data_dir, lang):
     print(f'Loading CoNLL NER data for {lang} Language..')
     train_set = BioDataset(os.path.join(data_dir, f'{lang}.train'),
