@@ -27,6 +27,30 @@ Unlike most existing methods that rely only on language-invariant features for C
 - tqdm (for progress bar)
 
 
+## File Structure
+```
+.
+├── LICENSE
+├── README.md
+├── conlleval.pl                            (official CoNLL evaluation script)
+├── data_prep                               (data processing scripts)
+│   ├── bio_dataset.py                      (processing the CoNLL dataset)
+│   └── multi_lingual_amazon.py             (processing the Amazon Review dataset)
+├── layers.py                               (lower-level helper modules)
+├── models.py                               (higher-level modules)
+├── options.py                              (hyper-parameters aka. all the knobs you may want to turn)
+├── scripts                                 (scripts for training and evaluating the models)
+│   ├── get_overall_perf_amazon.py          (evaluation script for Amazon Reviews)
+│   ├── get_overall_perf_ner.py             (evaluation script for CoNLL NER)
+│   ├── train_amazon_3to1.sh                (training script for Amazon Reviews)
+│   └── train_conll_ner_3to1.sh             (training script for CoNLL NER)
+├── train_cls_man_moe.py                    (training code for text classification)
+├── train_tagging_man_moe.py                (training code for sequence tagging)
+├── utils.py                                (helper functions)
+└── vocab.py                                (building the vocabulary)
+```
+
+
 ## Dataset
 The CoNLL [2002](https://www.clips.uantwerpen.be/conll2002/ner/), [2003](https://www.clips.uantwerpen.be/conll2003/ner/) and [Amazon](https://webis.de/data/webis-cls-10.html) datasets, as well as the multilingual word embeddings ([MUSE](https://github.com/facebookresearch/MUSE), [VecMap](https://github.com/artetxem/vecmap), [UMWE](https://github.com/ccsasuke/umwe)) are all publicly available online.
 
