@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+
 # A shared LSTM + MAN for learning domain-invariant features
 # Another shared LSTM with MoE on top for learning domain-specific features
 # MoE MLP tagger

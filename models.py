@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+
 import torch
 import torch.nn.functional as functional
 from torch import autograd, nn

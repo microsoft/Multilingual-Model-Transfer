@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+
 # python get_overall_perf.py model_dir suffix src_lang
 from collections import defaultdict
 import os

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+
 domains=("books" "dvd" "music")
 langs=("fr" "ja" "de")
 for domain in ${domains[@]}

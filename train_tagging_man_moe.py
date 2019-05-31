@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+
 # A shared LSTM + MAN for learning language-invariant features (F_s)
 # Another shared LSTM with MoE on top for learning language-specific features (F_p)
 # MoE MLP tagger (C)
