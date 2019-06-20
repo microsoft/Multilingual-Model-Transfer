@@ -36,6 +36,10 @@ Unlike most existing methods that rely only on language-invariant features for C
 ├── data_prep                               (data processing scripts)
 │   ├── bio_dataset.py                      (processing the CoNLL dataset)
 │   └── multi_lingual_amazon.py             (processing the Amazon Review dataset)
+├── data_processing_scripts                 (auxiliary scripts for dataset pre-processing)
+│   └── amazon
+│       ├── pickle_dataset.py
+│       └── process_dataset.py
 ├── layers.py                               (lower-level helper modules)
 ├── models.py                               (higher-level modules)
 ├── options.py                              (hyper-parameters aka. all the knobs you may want to turn)
