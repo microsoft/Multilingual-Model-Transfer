@@ -2,7 +2,7 @@
 
 This repo contains the source code for our ACL 2019 paper:
 
-[**Multi-Source Cross-Lingual Model Transfer: Learning What to Share**](https://arxiv.org/abs/1810.03552)
+[**Multi-Source Cross-Lingual Model Transfer: Learning What to Share**](https://www.aclweb.org/anthology/P19-1299)
 <br>
 [Xilun Chen](http://www.cs.cornell.edu/~xlchen/),
 [Ahmed Hassan Awadallah](https://www.microsoft.com/en-us/research/people/hassanam/),
@@ -12,8 +12,9 @@ This repo contains the source code for our ACL 2019 paper:
 <br>
 The 57th Annual Meeting of the Association for Computational Linguistics (ACL 2019)
 <br>
-[paper (arXiv)](https://arxiv.org/abs/1810.03552),
-[bibtex](http://www.cs.cornell.edu/~xlchen/resources/bibtex/manmoe.bib)
+[paper](https://www.aclweb.org/anthology/P19-1299),
+[arXiv](https://arxiv.org/abs/1810.03552),
+[bibtex](https://aclweb.org/anthology/papers/P/P19/P19-1299.bib)
 
 ## Introduction
 Modern NLP applications have enjoyed a great boost utilizing neural networks models. Such deep neural models, however, are not applicable to most human languages due to the lack of annotated training data for various NLP tasks. Cross-lingual transfer learning (CLTL) is a viable method for building NLP models for a low-resource target language by leveraging labeled data from other (source) languages. In this work, we focus on the multilingual transfer setting where training data in multiple source languages is leveraged to further boost target language performance.
