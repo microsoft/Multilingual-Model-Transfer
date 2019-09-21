@@ -59,8 +59,6 @@ Unlike most existing methods that rely only on language-invariant features for C
 ## Dataset
 The CoNLL [2002](https://www.clips.uantwerpen.be/conll2002/ner/), [2003](https://www.clips.uantwerpen.be/conll2003/ner/) and [Amazon](https://webis.de/data/webis-cls-10.html) datasets, as well as the multilingual word embeddings ([MUSE](https://github.com/facebookresearch/MUSE), [VecMap](https://github.com/artetxem/vecmap), [UMWE](https://github.com/ccsasuke/umwe)) are all publicly available online.
 
-Our pre-processed version may be provided separately to run our code with 1-click.
-
 ## Run Experiments
 
 ### CoNLL Named Entity Recogintion
