@@ -9,6 +9,7 @@ import torch
 from torch.utils.data import Dataset
 
 from options import opt
+
 from utils import read_bio_samples
 
 class BioDataset(Dataset):
@@ -23,10 +24,14 @@ class BioDataset(Dataset):
                  update_vocab, remove_empty=False):
         self.raw_X = []
         self.raw_Y = []
-        with open(input_file) as inf:
+        if (input_file[0:3] == 'eng') or (input_file[0:3] == 'deu'):
+            encoding = 'utf-8'
+        else:
+            encoding = 'ISO-8859-1'
+        with open(input_file, encoding=encoding) as inf:
             for lines in read_bio_samples(inf):
-                x = [l.split('\t')[0] for l in lines]
-                y = [l.split('\t')[-1] for l in lines]
+                x = [l.split()[0] for l in lines]
+                y = [l.split()[-1] for l in lines]
                 if remove_empty:
                     if all([l=='O' for l in y]):
                         continue
