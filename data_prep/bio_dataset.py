@@ -21,13 +21,9 @@ class BioDataset(Dataset):
         self.Y: list of lists of integers
     """
     def __init__(self, input_file, vocab, char_vocab, tag_vocab,
-                 update_vocab, remove_empty=False):
+                 update_vocab, encoding='utf-8', remove_empty=False):
         self.raw_X = []
         self.raw_Y = []
-        if (input_file[0:3] == 'eng') or (input_file[0:3] == 'deu'):
-            encoding = 'utf-8'
-        else:
-            encoding = 'ISO-8859-1'
         with open(input_file, encoding=encoding) as inf:
             for lines in read_bio_samples(inf):
                 x = [l.split()[0] for l in lines]
@@ -75,14 +71,24 @@ class BioDataset(Dataset):
         subset.Y = [subset.Y[i] for i in idx]
         return subset
 
+class ConllDataset(BioDataset):
+    def __init__(self, input_file, vocab, char_vocab, tag_vocab,
+            update_vocab, remove_empty=False):
+        if (input_file[17:20] == 'esp') or (input_file[17:20] == 'ned'):
+            encoding = 'ISO-8859-1'
+        else:
+            encoding = 'utf-8'
+        super().__init__(input_file, vocab, char_vocab, tag_vocab, 
+                update_vocab, encoding, remove_empty=False)
+
 
 def get_conll_ner_datasets(vocab, char_vocab, tag_vocab, data_dir, lang):
     print(f'Loading CoNLL NER data for {lang} Language..')
-    train_set = BioDataset(os.path.join(data_dir, f'{lang}.train'),
+    train_set = ConllDataset(os.path.join(data_dir, f'{lang}.train'),
                            vocab, char_vocab, tag_vocab, update_vocab=True, remove_empty=opt.remove_empty_samples)
-    dev_set = BioDataset(os.path.join(data_dir, f'{lang}.dev'),
+    dev_set = ConllDataset(os.path.join(data_dir, f'{lang}.dev'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
-    test_set = BioDataset(os.path.join(data_dir, f'{lang}.test'),
+    test_set = ConllDataset(os.path.join(data_dir, f'{lang}.test'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
     return train_set, dev_set, test_set, train_set
 
