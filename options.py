@@ -131,6 +131,7 @@ parser.add_argument('--mlp_dropout', type=float, default=0.5)
 parser.add_argument('--D_word_dropout', type=float, default=0)
 parser.add_argument('--D_dropout', type=float, default=0.5)
 parser.add_argument('--device/', dest='device', type=str, default='cuda')
+parser.add_argument('--use_data_parallel/', dest='use_data_parallel', action='store_true', default=False)
 parser.add_argument('--debug/', dest='debug', action='store_true')
 ###### MoE options ######
 # a shared LSTM is used, and each expert is a MLP
