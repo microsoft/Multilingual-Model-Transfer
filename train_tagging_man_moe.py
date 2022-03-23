@@ -144,10 +144,15 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
             D = LanguageDiscriminator(opt.D_model, opt.D_layers,
                     opt.shared_hidden_size, opt.shared_hidden_size,
                     len(opt.all_langs), opt.D_dropout, opt.D_bn, d_args)
-    
-    F_s, C, D = F_s.to(opt.device) if F_s else None, C.to(opt.device), D.to(opt.device) if D else None
+    if opt.use_data_parallel:
+        F_s, C, D = nn.DataParallel(F_s).to(opt.device) if F_s else None, nn.DataParallel(C).to(opt.device), nn.DataParallel(D).to(opt.device) if D else None
+    else:
+        F_s, C, D = F_s.to(opt.device) if F_s else None, C.to(opt.device), D.to(opt.device) if D else None
     if F_p:
-        F_p = F_p.to(opt.device)
+        if opt.use_data_parallel:
+            F_p = nn.DataParallel(F_p).to(opt.device)
+        else:
+            F_p = F_p.to(opt.device)
     # optimizers
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, itertools.chain(*map(list,
         [emb.parameters(), F_s.parameters() if F_s else [], \
@@ -268,8 +273,13 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
                         _, pred = torch.max(d_outputs, -1)
                         # d_total += len(d_lengths)
                         d_correct += (pred==d_targets).sum().item()
-                        l_d = functional.nll_loss(d_outputs.view(-1, D.num_langs),
-                                d_targets.view(-1), ignore_index=-1)
+                        if opt.use_data_parallel:
+                            l_d = functional.nll_loss(d_outputs.view(-1, D.module.num_langs),
+                                    d_targets.view(-1), ignore_index=-1)
+                        else:
+                            l_d = functional.nll_loss(d_outputs.view(-1, D.num_langs),
+                                    d_targets.view(-1), ignore_index=-1)
+
                         l_d.backward()
                         loss_d[lang] = l_d.item()
                     # gradient penalty
@@ -357,8 +367,12 @@ def train(vocabs, char_vocab, tag_vocab, train_sets, dev_sets, test_sets, unlabe
                     else:
                         d_outputs = D((shared_feat, lengths))
                         d_targets = utils.get_lang_label(opt.loss, lang, len(lengths))
-                    l_d = functional.nll_loss(d_outputs.view(-1, D.num_langs),
-                            d_targets.view(-1), ignore_index=-1)
+                    if opt.use_data_parallel:
+                        l_d = functional.nll_loss(d_outputs.view(-1, D.module.num_langs),
+                                d_targets.view(-1), ignore_index=-1)
+                    else:
+                        l_d = functional.nll_loss(d_outputs.view(-1, D.num_langs),
+                                d_targets.view(-1), ignore_index=-1)
                     if opt.lambd > 0:
                         l_d *= -opt.lambd
                     l_d.backward()
@@ -444,8 +458,13 @@ def evaluate(name, loader, vocab, tag_vocab, emb, lang, F_s, F_p, C):
             if opt.private_hidden_size > 0:
                 if not F_p:
                     # unlabeled lang
-                    lang_features = torch.zeros(targets.size(0),
-                            targets.size(1), opt.private_hidden_size).to(opt.device) 
+                    if opt.use_data_parallel:
+                        lang_features = torch.zeros(target.size(0),
+                                targets.size(1), opt.private_hidden_size)
+                        lang_features = nn.DataParallel(lang_features).to(opt.device)
+                    else:
+                        lang_features = torch.zeros(targets.size(0),
+                                targets.size(1), opt.private_hidden_size).to(opt.device) 
                 else:
                     lang_features, gate_outputs = F_p(embeds)
             if opt.C_MoE:
