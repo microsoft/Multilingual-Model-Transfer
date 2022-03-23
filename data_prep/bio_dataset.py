@@ -20,13 +20,13 @@ class BioDataset(Dataset):
         self.Y: list of lists of integers
     """
     def __init__(self, input_file, vocab, char_vocab, tag_vocab,
-                 update_vocab, remove_empty=False):
+                 update_vocab, encoding='utf-8', remove_empty=False):
         self.raw_X = []
         self.raw_Y = []
-        with open(input_file) as inf:
+        with open(input_file, encoding=encoding) as inf:
             for lines in read_bio_samples(inf):
-                x = [l.split('\t')[0] for l in lines]
-                y = [l.split('\t')[-1] for l in lines]
+                x = [l.split()[0] for l in lines]
+                y = [l.split()[-1] for l in lines]
                 if remove_empty:
                     if all([l=='O' for l in y]):
                         continue
@@ -70,35 +70,45 @@ class BioDataset(Dataset):
         subset.Y = [subset.Y[i] for i in idx]
         return subset
 
+class ConllDataset(BioDataset):
+    def __init__(self, input_file, vocab, char_vocab, tag_vocab,
+            update_vocab, remove_empty=False):
+        if (input_file[17:20] == 'esp') or (input_file[17:20] == 'ned'):
+            encoding = 'ISO-8859-1'
+        else:
+            encoding = 'utf-8'
+        super().__init__(input_file, vocab, char_vocab, tag_vocab, 
+                update_vocab, encoding, remove_empty=False)
+
 
 def get_conll_ner_datasets(vocab, char_vocab, tag_vocab, data_dir, lang):
     print(f'Loading CoNLL NER data for {lang} Language..')
-    train_set = BioDataset(os.path.join(data_dir, f'{lang}.train'),
+    train_set = ConllDataset(os.path.join(data_dir, f'{lang}.train'),
                            vocab, char_vocab, tag_vocab, update_vocab=True, remove_empty=opt.remove_empty_samples)
-    dev_set = BioDataset(os.path.join(data_dir, f'{lang}.dev'),
+    dev_set = ConllDataset(os.path.join(data_dir, f'{lang}.dev'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
-    test_set = BioDataset(os.path.join(data_dir, f'{lang}.test'),
+    test_set = ConllDataset(os.path.join(data_dir, f'{lang}.test'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
     return train_set, dev_set, test_set, train_set
 
 
 def get_train_on_translation_conll_ner_datasets(vocab, char_vocab, tag_vocab, data_dir, lang):
     print(f'Loading Train-on-Translation CoNLL NER data for {lang} Language..')
-    train_set = BioDataset(os.path.join(data_dir, f'eng2{lang}_{lang}.train'),
+    train_set = ConllDataset(os.path.join(data_dir, f'eng2{lang}_{lang}.train'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
-    dev_set = BioDataset(os.path.join(data_dir, f'{lang}.dev'),
+    dev_set = ConllDataset(os.path.join(data_dir, f'{lang}.dev'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
-    test_set = BioDataset(os.path.join(data_dir, f'{lang}.test'),
+    test_set = ConllDataset(os.path.join(data_dir, f'{lang}.test'),
                            vocab, char_vocab, tag_vocab, update_vocab=False)
     return train_set, dev_set, test_set, train_set
 
 
 def get_test_on_translation_conll_ner_datasets(vocab, char_vocab, tag_vocab, data_dir, lang):
     print(f'Loading Test-on-Translation CoNLL NER data for {lang} Language..')
-    train_set = BioDataset(os.path.join(data_dir, f'eng.train'),
+    train_set = ConllDataset(os.path.join(data_dir, f'eng.train'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
-    dev_set = BioDataset(os.path.join(data_dir, f'eng2{lang}_eng.dev'),
+    dev_set = ConllDataset(os.path.join(data_dir, f'eng2{lang}_eng.dev'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
-    test_set = BioDataset(os.path.join(data_dir, f'eng2{lang}_eng.test'),
+    test_set = ConllDataset(os.path.join(data_dir, f'eng2{lang}_eng.test'),
                            vocab, char_vocab, tag_vocab, update_vocab=False)
     return train_set, dev_set, test_set, train_set
