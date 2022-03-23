@@ -9,7 +9,6 @@ import torch
 from torch.utils.data import Dataset
 
 from options import opt
-
 from utils import read_bio_samples
 
 class BioDataset(Dataset):
@@ -95,21 +94,21 @@ def get_conll_ner_datasets(vocab, char_vocab, tag_vocab, data_dir, lang):
 
 def get_train_on_translation_conll_ner_datasets(vocab, char_vocab, tag_vocab, data_dir, lang):
     print(f'Loading Train-on-Translation CoNLL NER data for {lang} Language..')
-    train_set = BioDataset(os.path.join(data_dir, f'eng2{lang}_{lang}.train'),
+    train_set = ConllDataset(os.path.join(data_dir, f'eng2{lang}_{lang}.train'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
-    dev_set = BioDataset(os.path.join(data_dir, f'{lang}.dev'),
+    dev_set = ConllDataset(os.path.join(data_dir, f'{lang}.dev'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
-    test_set = BioDataset(os.path.join(data_dir, f'{lang}.test'),
+    test_set = ConllDataset(os.path.join(data_dir, f'{lang}.test'),
                            vocab, char_vocab, tag_vocab, update_vocab=False)
     return train_set, dev_set, test_set, train_set
 
 
 def get_test_on_translation_conll_ner_datasets(vocab, char_vocab, tag_vocab, data_dir, lang):
     print(f'Loading Test-on-Translation CoNLL NER data for {lang} Language..')
-    train_set = BioDataset(os.path.join(data_dir, f'eng.train'),
+    train_set = ConllDataset(os.path.join(data_dir, f'eng.train'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
-    dev_set = BioDataset(os.path.join(data_dir, f'eng2{lang}_eng.dev'),
+    dev_set = ConllDataset(os.path.join(data_dir, f'eng2{lang}_eng.dev'),
                            vocab, char_vocab, tag_vocab, update_vocab=True)
-    test_set = BioDataset(os.path.join(data_dir, f'eng2{lang}_eng.test'),
+    test_set = ConllDataset(os.path.join(data_dir, f'eng2{lang}_eng.test'),
                            vocab, char_vocab, tag_vocab, update_vocab=False)
     return train_set, dev_set, test_set, train_set
